@@ -1,33 +1,66 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Card } from './Card';
-import { LevelSelector } from './LevelSelector';
-import { Timer } from './Timer';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Sparkles, Trophy } from 'lucide-react';
-import { LEVEL_CONFIG, shuffleCards, getStoredScores, saveScore } from '../utils/gameUtils';
+import { useCallback, useEffect, useState } from 'react';
+import { getElfs, updateElfScore } from '../sanity';
+import { shuffleCards } from '../utils/gameUtils';
+import { Card } from './Card';
 import { Leaderboard } from './Leaderboard';
-import { ElfScore } from '../types/game';
+import { Timer } from './Timer';
 
-export function GameBoard() {
-  const [level, setLevel] = useState(1);
-  const [cards, setCards] = useState(shuffleCards(level));
+type GameBoardProps = {
+  toys: {
+    id: string;
+    image: string;
+  }[]
+  elfs: {
+    id: string;
+    name: string;
+    role: string;
+    score: number;
+  }[]
+}
+
+const config = {
+  pairs: 8,
+  gifts: ['🎁', '🎄', '⛄', '🦌', '🎅', '🔔', '🍪', '🧦'],
+  timeLimit: 90,
+  matchScore: 100,
+  mismatchPenalty: 10
+}
+
+export function GameBoard(props: GameBoardProps) {
+  const [cards, setCards] = useState(shuffleCards(props.toys));
   const [flippedIndices, setFlippedIndices] = useState<number[]>([]);
   const [matchedPairs, setMatchedPairs] = useState<number>(0);
   const [moves, setMoves] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
-  const [timeLeft, setTimeLeft] = useState(LEVEL_CONFIG[level].timeLimit);
+  const [timeLeft, setTimeLeft] = useState(config.timeLimit);
   const [isGameOver, setIsGameOver] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [elfName, setElfName] = useState('');
-  const [scores, setScores] = useState<ElfScore[]>(getStoredScores());
+  const [selectedElf, setSelectedElf] = useState<string>();
 
-  const config = LEVEL_CONFIG[level as keyof typeof LEVEL_CONFIG];
+  const { refetch, data: elfs } = useQuery({
+    queryKey: ['elfs'],
+    queryFn: async () => {
+      return await getElfs();
+    },
+    initialData: props.elfs
+  })
+
+  const changeElfScore = useMutation({
+    mutationFn: async ({ _id, score }: { _id: string, score: number }) => {
+      const result = await updateElfScore(_id, score);
+      console.log(result);
+      return result;
+    }
+  })
 
   const handleCardClick = (index: number) => {
     if (!gameStarted) {
       setGameStarted(true);
     }
-    
+
     if (
       cards[index].isMatched ||
       cards[index].isFlipped ||
@@ -38,19 +71,19 @@ export function GameBoard() {
     const newCards = [...cards];
     newCards[index].isFlipped = true;
     setCards(newCards);
-    
+
     setFlippedIndices([...flippedIndices, index]);
   };
 
   useEffect(() => {
     if (flippedIndices.length === 2) {
       setMoves(moves + 1);
-      
+
       const [firstIndex, secondIndex] = flippedIndices;
       if (cards[firstIndex].gift === cards[secondIndex].gift) {
         setMatchedPairs(matchedPairs + 1);
         setScore(score + config.matchScore);
-        
+
         const newCards = [...cards];
         newCards[firstIndex].isMatched = true;
         newCards[secondIndex].isMatched = true;
@@ -64,7 +97,7 @@ export function GameBoard() {
           setCards(newCards);
         }, 1000);
       }
-      
+
       setTimeout(() => setFlippedIndices([]), 1000);
     }
   }, [flippedIndices]);
@@ -85,37 +118,24 @@ export function GameBoard() {
     return () => clearInterval(timer);
   }, [gameStarted, timeLeft, isGameOver]);
 
-  const resetGame = useCallback((newLevel?: number) => {
-    const levelToUse = newLevel || level;
-    setCards(shuffleCards(levelToUse));
+  const resetGame = useCallback(() => {
+    setCards(shuffleCards(props.toys));
     setFlippedIndices([]);
     setMatchedPairs(0);
     setMoves(0);
     setScore(0);
-    setTimeLeft(LEVEL_CONFIG[levelToUse].timeLimit);
+    setTimeLeft(config.timeLimit);
     setIsGameOver(false);
     setGameStarted(false);
-  }, [level]);
+  }, []);
 
-  const handleLevelSelect = (newLevel: number) => {
-    setLevel(newLevel);
-    resetGame(newLevel);
-  };
+  const handleScoreSave = async () => {
 
-  const handleScoreSave = () => {
-    if (elfName.trim()) {
-      const newScore: ElfScore = {
-        name: elfName,
-        score,
-        level,
-        moves,
-        timeLeft,
-        timestamp: Date.now()
-      };
-      saveScore(newScore);
-      setScores(getStoredScores());
-      setElfName('');
-    }
+    if (selectedElf === undefined) return;
+
+    await changeElfScore.mutateAsync({ _id: selectedElf, score });
+
+    await refetch();
   };
 
   const isVictory = matchedPairs === config.pairs;
@@ -124,7 +144,6 @@ export function GameBoard() {
     <div className="min-h-screen bg-gradient-to-b from-red-700 to-green-800 p-8">
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <LevelSelector currentLevel={level} onLevelSelect={handleLevelSelect} />
           <button
             onClick={() => setShowLeaderboard(true)}
             className="px-6 py-3 bg-yellow-400 text-gray-900 rounded-lg flex items-center gap-2 hover:bg-yellow-500 transition-colors"
@@ -133,7 +152,7 @@ export function GameBoard() {
             Leaderboard
           </button>
         </div>
-        
+
         <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl">
           <div className="flex justify-between items-center mb-8">
             <div className="flex items-center gap-4">
@@ -143,9 +162,9 @@ export function GameBoard() {
                 <div className="text-2xl font-bold">{score}</div>
               </div>
             </div>
-            
+
             <Timer timeLeft={timeLeft} totalTime={config.timeLimit} />
-            
+
             <div className="flex items-center gap-4">
               <Sparkles className="w-8 h-8 text-yellow-300" />
               <div className="text-white">
@@ -155,9 +174,7 @@ export function GameBoard() {
             </div>
           </div>
 
-          <div className={`grid gap-4 md:gap-6 ${
-            level === 3 ? 'grid-cols-6' : 'grid-cols-4'
-          }`}>
+          <div className="grid grid-cols-4 gap-8 place-items-center">
             {cards.map((card, index) => (
               <Card
                 key={card.id}
@@ -165,7 +182,7 @@ export function GameBoard() {
                 isFlipped={card.isFlipped}
                 isMatched={card.isMatched}
                 onClick={() => handleCardClick(index)}
-                giftEmoji={card.gift}
+                gift={card.gift}
               />
             ))}
           </div>
@@ -173,7 +190,7 @@ export function GameBoard() {
 
         {showLeaderboard && (
           <Leaderboard
-            scores={scores}
+            scores={elfs}
             onClose={() => setShowLeaderboard(false)}
           />
         )}
@@ -187,7 +204,7 @@ export function GameBoard() {
               <p className="text-gray-600 mb-6">
                 {isVictory ? (
                   <>
-                    You completed level {level} in {moves} moves<br />
+                    You completed in {moves} moves<br />
                     Time remaining: {timeLeft} seconds<br />
                     Final Score: {score}
                   </>
@@ -199,18 +216,20 @@ export function GameBoard() {
                 )}
               </p>
               <div className="mb-6">
-                <input
-                  type="text"
-                  value={elfName}
-                  onChange={(e) => setElfName(e.target.value)}
-                  placeholder="Enter your elf name"
+                <select
+                  value={selectedElf}
+                  onChange={(e) => setSelectedElf(e.target.value)}
                   className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 w-full max-w-xs"
-                />
+                >
+                  {elfs.map(elf => (
+                    <option key={elf.id} value={elf.id}>{elf.name} ({elf.role})</option>
+                  ))}
+                </select>
               </div>
               <div className="flex gap-4 justify-center">
                 <button
                   onClick={handleScoreSave}
-                  disabled={!elfName.trim()}
+                  // disabled={!elfName.trim()}
                   className="px-6 py-3 bg-yellow-400 hover:bg-yellow-500 text-gray-900 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save Score
@@ -221,14 +240,6 @@ export function GameBoard() {
                 >
                   Try Again
                 </button>
-                {isVictory && level < 3 && (
-                  <button
-                    onClick={() => handleLevelSelect(level + 1)}
-                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-                  >
-                    Next Level
-                  </button>
-                )}
               </div>
             </div>
           </div>
